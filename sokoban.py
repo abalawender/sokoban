@@ -5,31 +5,45 @@ from collections import deque
 MOVES = ((-1, 0, 'U'), (1, 0, 'D'), (0, -1, 'L'), (0, 1, 'R'))
 
 
+# level file character scheme, same as Racso/fzero-apps sokoban/scripts/level.c:
+#   '#' wall   ' ' floor   '.' target   '@' player   '+' player on target
+#   '$' crate  '*' crate on target
 def load_level(path):
     with open(path) as f:
-        rows = list(map(list, f.read().splitlines()))
-    # pad ragged rows and add a wall border so indexing never goes out of range
+        rows = f.read().splitlines()
+    # pad ragged rows with floor (like level.c's zero-initialized board) and add
+    # a 1-cell wall border so indexing never goes out of range; render() strips
+    # the border again
     width = max(len(row) for row in rows)
     grid = ([['#'] * (width + 2)]
-            + [['#'] + row + ['#'] * (width + 1 - len(row)) for row in rows]
+            + [['#'] + list(row) + [' '] * (width + 1 - len(row)) for row in rows]
             + [['#'] * (width + 2)])
 
-    player = None
+    players = []
     crates = []
     targets = []
     for i, row in enumerate(grid):
         for j, cell in enumerate(row):
-            if cell == 'o':
-                player = (i, j)
-                row[j] = ' '
-            elif cell == 'x':
-                crates.append((i, j))
-                row[j] = ' '
-            elif cell == '.':
+            if cell in '# ':
+                continue
+            if cell == '.':
                 targets.append((i, j))
-                row[j] = ' '
-    assert player is not None
-    return grid, player, crates, targets
+            elif cell == '@':
+                players.append((i, j))
+            elif cell == '+':
+                players.append((i, j))
+                targets.append((i, j))
+            elif cell == '$':
+                crates.append((i, j))
+            elif cell == '*':
+                crates.append((i, j))
+                targets.append((i, j))
+            else:
+                raise ValueError(f"unknown level character {cell!r} at {(i, j)}")
+            row[j] = ' '
+
+    assert len(players) == 1, f"expected exactly one player, found {len(players)}"
+    return grid, players[0], crates, targets
 
 
 def alive_squares(grid, targets):
@@ -136,19 +150,38 @@ def solve(grid, player, crates, targets):
     return None
 
 
+# single-width unicode glyphs for board rendering
+GLYPHS = {
+    'wall': '▒',
+    'floor': ' ',
+    'target': '□',            # hollow square: the goal to fill
+    'player': '☺',
+    'player_on_target': '☻',  # filled counterpart of ☺, narrow width (⊙ renders wide)
+    'crate': '■',
+    'crate_on_target': '▣',   # crate filling the target outline
+}
+ARROWS = {'U': '↑', 'D': '↓', 'L': '←', 'R': '→'}
+
+
 def render(grid, crates, player_pos, target_set):
     lines = []
-    for i, row in enumerate(grid):
+    # skip the 1-cell safety border added in load_level
+    for i in range(1, len(grid) - 1):
+        row = grid[i]
         line = ''
-        for j, cell in enumerate(row):
-            if (i, j) == player_pos:
-                line += 'o'
-            elif (i, j) in crates:
-                line += '*' if (i, j) in target_set else 'x'
-            elif (i, j) in target_set:
-                line += '.'
+        for j in range(1, len(row) - 1):
+            cell = row[j]
+            pos = (i, j)
+            if pos == player_pos:
+                line += GLYPHS['player_on_target'] if pos in target_set else GLYPHS['player']
+            elif pos in crates:
+                line += GLYPHS['crate_on_target'] if pos in target_set else GLYPHS['crate']
+            elif cell == '#':
+                line += GLYPHS['wall']
+            elif pos in target_set:
+                line += GLYPHS['target']
             else:
-                line += cell
+                line += GLYPHS['floor']
         lines.append(line)
     return '\n'.join(lines)
 
@@ -172,7 +205,7 @@ def main():
         crate = (stand[0] + mx, stand[1] + my)
         config = (config - {crate}) | {(stand[0] + 2 * mx, stand[1] + 2 * my)}
         player_pos = crate
-        print(f"--- push {k}: {ch} ---")
+        print(f"--- push {k}: {ARROWS[ch]} ---")
         print(render(grid, config, player_pos, target_set))
 
 
